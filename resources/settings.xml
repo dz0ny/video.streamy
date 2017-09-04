@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+    <category label="Streamy">
+        <setting id="server" type="text" label="Server URI" default="http://localhost:9092"/>
+        <setting id="debug" type="bool" label="Debug" default="false"/>
+    </category>
+    <category label="ShowRSS">
+        <setting id="showrss_username" type="text" enable="!eq(-1,)" label="ShowRSS Username" />
+        <setting id="showrss_password" type="text" option="hidden" enable="!eq(-1,)" label="ShowRSS Password" />
+    </category>
+</settings>
+
