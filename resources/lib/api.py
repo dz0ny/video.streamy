@@ -1,9 +1,12 @@
 import requests
+import logging
 
 from resources.lib import cache as cachetool
+from trakt import Trakt
+from trakt.objects import Movie, Show
 
 cache = cachetool.Cache()
-
+logger = logging.getLogger(__name__)
 
 class fetchapi(object):
     BASE_URL = "https://movies-v2.api-fetch.website"
@@ -107,3 +110,54 @@ class torapi(object):
             res = req.json()['torrent_results']
             cache.set(self, url, res)
         return res
+
+
+class traktAPI(object):
+    __client_id = "d4161a7a106424551add171e5470112e4afdaf2438e6ef2fe0548edc75924868"
+    __client_secret = "b5fcd7cb5d9bb963784d11bbf8535bc0d25d46225016191eb48e50792d2155c0"
+
+    def __init__(self, force=False):
+        logger.debug("Initializing.")
+
+        proxyURL = checkAndConfigureProxy()
+        if proxyURL:
+            Trakt.http.proxies = {
+                'http': proxyURL,
+                'https': proxyURL
+            }
+
+        # Configure
+        Trakt.configuration.defaults.client(
+            id=self.__client_id,
+            secret=self.__client_secret
+        )
+
+    def getMovieSummary(self, movieId):
+        with Trakt.configuration.http(retry=True):
+            return Trakt['movies'].get(movieId)
+
+    def getShowSummary(self, showId):
+        with Trakt.configuration.http(retry=True):
+            return Trakt['shows'].get(showId)
+
+    def getShowWithAllEpisodesList(self, showId):
+        with Trakt.configuration.http(retry=True, timeout=90):
+            return Trakt['shows'].seasons(showId, extended='episodes')
+
+    def getEpisodeSummary(self, showId, season, episode):
+        with Trakt.configuration.http(retry=True):
+            return Trakt['shows'].episode(showId, season, episode)
+
+    def getIdLookup(self, id, id_type):
+        with Trakt.configuration.http(retry=True):
+            result = Trakt['search'].lookup(id, id_type)
+            if result and not isinstance(result, list):
+                result = [result]
+            return result
+
+    def getTextQuery(self, query, type, year):
+        with Trakt.configuration.http(retry=True, timeout=90):
+            result = Trakt['search'].query(query, type, year)
+            if result and not isinstance(result, list):
+                result = [result]
+            return result
