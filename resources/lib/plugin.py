@@ -2,19 +2,20 @@
 
 import logging
 from os import path
-from urllib import unquote, urlencode
+from urllib import unquote, urlencode, quote_plus
 from urlparse import parse_qs, urlparse
 from xml.etree import ElementTree
-
 import requests
 
 import routing
 import xbmc
 import xbmcaddon
 from resources.lib import kodilogging, kodiutils
-from resources.lib.api import torapi, fetchapi
+from resources.lib.api import fetchapi, torapi
 from xbmcgui import ListItem
-from xbmcplugin import addDirectoryItem, endOfDirectory, setContent, addSortMethod, SORT_METHOD_UNSORTED, SORT_METHOD_DATE, SORT_METHOD_GENRE 
+from xbmcplugin import (SORT_METHOD_DATE, SORT_METHOD_GENRE,
+                        SORT_METHOD_UNSORTED, addDirectoryItem, addSortMethod,
+                        endOfDirectory, setContent)
 
 ADDON = xbmcaddon.Addon()
 logger = logging.getLogger(ADDON.getAddonInfo('id'))
@@ -63,10 +64,10 @@ def popcorn_all():
 
 @plugin.route('/rarbg_all')
 def rarbg_all():
-    directory(rarbgc, 'Movies', '17;44;45;50;')
-    directory(rarbgc, 'TV', '18;41;49;')
-    directory(rarbgc, 'Music', '23;24;25;26;')
-    directory(rarbgc, 'XXX', '4;')
+    directory(rarbgc, 'Movies', 'movies')
+    directory(rarbgc, 'TV', 'tv')
+    directory(rarbgc, 'Music', '23;24;25;26')
+    directory(rarbgc, 'XXX', '4')
     directory(rarbg_search, 'Search')
     endOfDirectory(plugin.handle)
 
@@ -112,11 +113,11 @@ def show_torrents():
 def show_torrent(ih=None):
 
     if 'magnet' in plugin.args:
-        req = requests.get(str_url('torrent/add'), params={
+        req = requests.get(str_url('torrents/add'), params={
             'magnet': unquote(plugin.args['magnet'][0]),
         })
     else:
-        req = requests.get(str_url('torrent/{}'.format(ih)))
+        req = requests.get(str_url('torrents/{}'.format(ih)))
     req.raise_for_status()
     data = req.json()
     url = kodiutils.get_setting('server')
@@ -125,10 +126,9 @@ def show_torrent(ih=None):
             addDirectoryItem(plugin.handle, "{}{}".format(
                 url, f['data']), ListItem('/'.join(f['Path'])))
     else:
-        addDirectoryItem(plugin.handle, "{}/torrent/{}/stream?file={}".format(
+        addDirectoryItem(plugin.handle, "{}/torrents/{}/stream?file={}".format(
             url, data['ih'], data['name']), ListItem(data['name']))
     endOfDirectory(plugin.handle)
-
 
 
 @plugin.route('/rarbg/<c>')
@@ -136,10 +136,12 @@ def rarbgc(c):
     try:
         t = torapi()
         for f in t.category(c):
+            li = t.sanitize(f)
             addDirectoryItem(
                 plugin.handle,
                 plugin.url_for(show_torrent, ih='add', magnet=f['download']),
-                ListItem(f['filename']), True)
+                li, True)
+
         endOfDirectory(plugin.handle)
     except Exception as e:
         kodiutils.notification("rarbg", str(e))
@@ -209,6 +211,18 @@ def popcorn_show(id):
     endOfDirectory(plugin.handle)
 
 
+def to_yt(url):
+    if url and 'youtube' not in url:
+        return None
+    try:
+        url_data = urlparse(url)
+        query = parse_qs(url_data.query)
+        url = 'plugin://plugin.video.youtube/play/?video_id=' + query["v"][0]
+        return url
+    except Exception:
+        return None
+
+
 @plugin.route('/pocorn_movies')
 def pocorn_movies():
     t = fetchapi()
@@ -225,21 +239,36 @@ def pocorn_movies():
             })
         except Exception:
             pass
+        trailer = to_yt(f['trailer'])
         li.setInfo(
             'video',
             dict(
                 plot=f['synopsis'],
                 plotoutline=f['synopsis'],
                 code=f['imdb_id'],
+                genre='/'.join(f['genres']),
                 imdbnumber=f['imdb_id'],
                 year=f['year'],
-                trailer=f['trailer'],
+                duration=int(f['runtime']) * 60,
+                trailer=trailer,
             )
         )
-
-        for k, v in f['torrents']['en'].iteritems():
-            mag = v['url']
-            break
+        try:
+            if f['trailer']:
+                li.addContextMenuItems([
+                    ('Trailer', 'PlayMedia({})'.format(trailer.encode('ascii'))),
+                ])
+        except Exception:
+            pass
+        torrents = f['torrents']['en']
+        
+        mag = torrents.get('1080p')
+        if not mag:
+            mag = torrents.get('720p')
+        else:
+            for k, v in torrents.iteritems():
+                mag = v['url']
+                break
 
         addDirectoryItem(plugin.handle, plugin.url_for(
             show_torrent, ih='add', magnet=mag), li, True)

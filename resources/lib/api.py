@@ -1,12 +1,17 @@
-import requests
 import logging
+from collections import namedtuple
+
+import requests
+import re
 
 from resources.lib import cache as cachetool
 from trakt import Trakt
 from trakt.objects import Movie, Show
+from xbmcgui import ListItem
 
 cache = cachetool.Cache()
 logger = logging.getLogger(__name__)
+
 
 class fetchapi(object):
     BASE_URL = "https://movies-v2.api-fetch.website"
@@ -21,27 +26,27 @@ class fetchapi(object):
 
     def get_movies(self):
         data = []
-        for x in range(1, 25):
+        for x in range(1, 50):
             url = '{}/movies/{}?sort=trending'.format(self.BASE_URL, x)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
                 req.raise_for_status()
                 res = req.json()
-                cache.set(self, url, res)
+                cache.set(self, url, res, 48)
             data.extend(res)
         return data
 
     def get_shows(self):
         data = []
-        for x in range(1, 25):
+        for x in range(1, 50):
             url = '{}/shows/{}?sort=trending'.format(self.BASE_URL, x)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
                 req.raise_for_status()
                 res = req.json()
-                cache.set(self, url, res)
+                cache.set(self, url, res, 48)
             data.extend(res)
         return data
 
@@ -52,7 +57,7 @@ class fetchapi(object):
             req = self.r.get(url)
             req.raise_for_status()
             res = req.json()
-            cache.set(self, url, res)
+            cache.set(self, url, res, 48)
         return res
 
     def search(self, k):
@@ -62,7 +67,7 @@ class fetchapi(object):
             req = self.r.get(url)
             req.raise_for_status()
             res = req.json()
-            cache.set(self, url, res)
+            cache.set(self, url, res, 48)
         return res
 
 
@@ -72,25 +77,17 @@ class torapi(object):
 
     def __init__(self):
         self.r = requests.Session()
-        self.r.headers.update(
-            {
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36'
-            }
-        )
 
     @property
     def token(self):
-        self.token_ = cache.get(self, 'token')
-        if not self.token_:
-            TOKEN_URL = self.BASE_URL + "?get_token=get_token"
-            req = self.r.get(TOKEN_URL)
-            req.raise_for_status()
-            self.token_ = req.json()["token"]
-            cache.set(self, 'token', self.token_)
-        return self.token_
+        TOKEN_URL = self.BASE_URL + "?get_token=get_token"
+        req = self.r.get(TOKEN_URL)
+        req.raise_for_status()
+        return req.json()["token"]
+
 
     def category(self, c):
-        url = "&sort=seeders&limit=100&category=" + c
+        url = '&category=' + c + "&format=json_extended&sort=seeders&limit=100"
         url = self.BASE_URL + "?token=" + self.token + url
         res = cache.get(self, url)
         if not res:
@@ -110,6 +107,70 @@ class torapi(object):
             res = req.json()['torrent_results']
             cache.set(self, url, res)
         return res
+
+    def sanitize(self, obj):
+        info = dict(
+            title=obj['title'],
+            q='',
+            ratio='S:{}/L:{}'.format(obj['seeders'], obj['leechers']),
+        )
+        parts = re.split(r'[\W\-]+', obj['title'])
+        quas = ['720p', '1080p', 'hdrip', 'webrip', 'dvrip', 'web-dl']
+
+        for part in parts:
+            if part.encode('ascii').lower() in quas:
+                info['q'] = part
+
+        if 'Movies' in obj['category']:
+            info['type'] = 'movie'
+            title = []
+            for x in parts:
+                epinfo = re.match(r"(\d{4})", x)
+                if epinfo:
+                    info['year'] = int(epinfo.group(1))
+                    break
+                else:
+                    title.append(x)
+            info['title'] = ' '.join(title) 
+        if 'TV' in obj['category']:
+            info['type'] = 'episode'
+            title = []
+            for x in parts:
+                epinfo = re.match(r"S(\d+)E(\d+)", x)
+                if epinfo:
+                    info['season'] = int(epinfo.group(1))
+                    info['episode'] = int(epinfo.group(2))
+                    break
+                else:
+                    title.append(x)
+            info['title'] = ' '.join(title)   
+
+        info = namedtuple('rarbg', info.keys())(**info)
+        li = ListItem(obj['title'])
+        if getattr(info, 'type', None):
+            if info.type == 'movie':
+                title = '{0.year}: {0.title} {0.q} {0.ratio}'.format(info)
+                trailer = quote_plus('{0.title} trailer'.format(info))
+                li = ListItem(title)
+                li.addContextMenuItems([
+                    ('Trailer', 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(trailer)),
+                ])
+
+            elif info.type == 'episode':
+                if getattr(info, 'date', None):
+                    title = '{0.title} {0.date} {0.q} {0.ratio}'.format(info)
+                    trailer = quote_plus('{0.title} trailer'.format(info))
+                    li = ListItem(title)
+                    li.addContextMenuItems([
+                        ('Trailer', 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(trailer)),
+                    ])
+                else:
+                    title = '{0.title} S{0.season:02d}E{0.episode:02d} {0.q} {0.ratio}'.format(info)
+                    trailer = quote_plus('{0.title} trailer'.format(info))
+                    li = ListItem(title)
+                    li.addContextMenuItems([
+                        ('Trailer', 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(trailer)),
+                    ])
 
 
 class traktAPI(object):

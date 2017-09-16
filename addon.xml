@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="video.streamy" name="Streamy" version="0.0.5" provider-name="streamy">
+<addon id="video.streamy" name="Streamy" version="0.0.6" provider-name="streamy">
     <requires>
         <import addon="xbmc.python" version="2.25.0"/>
         <import addon="script.module.routing"/>
@@ -13,18 +13,7 @@
     <extension point="xbmc.addon.metadata">
         <summary lang="en_GB">Plays videos from streamy</summary>
         <description lang="en_GB"></description>
-        <language></language>
         <platform>all</platform>
         <license>MIT</license>
-        <forum></forum>
-        <website></website>
-        <email></email>
-        <source></source>
-        <news></news>
-        <disclaimer></disclaimer>
-        <assets>
-            <icon>resources/icon.png</icon>
-            <fanart>resources/fanart.jpg</fanart>
-        </assets>
     </extension>
 </addon>
