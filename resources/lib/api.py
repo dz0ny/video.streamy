@@ -1,6 +1,9 @@
-import requests
 import logging
+from collections import namedtuple
 
+import requests
+
+from guessit import guessit
 from resources.lib import cache as cachetool
 from trakt import Trakt
 from trakt.objects import Movie, Show
@@ -28,7 +31,7 @@ class fetchapi(object):
                 req = self.r.get(url)
                 req.raise_for_status()
                 res = req.json()
-                cache.set(self, url, res)
+                cache.set(self, url, res, 48)
             data.extend(res)
         return data
 
@@ -41,7 +44,7 @@ class fetchapi(object):
                 req = self.r.get(url)
                 req.raise_for_status()
                 res = req.json()
-                cache.set(self, url, res)
+                cache.set(self, url, res, 48)
             data.extend(res)
         return data
 
@@ -52,7 +55,7 @@ class fetchapi(object):
             req = self.r.get(url)
             req.raise_for_status()
             res = req.json()
-            cache.set(self, url, res)
+            cache.set(self, url, res, 48)
         return res
 
     def search(self, k):
@@ -62,7 +65,7 @@ class fetchapi(object):
             req = self.r.get(url)
             req.raise_for_status()
             res = req.json()
-            cache.set(self, url, res)
+            cache.set(self, url, res, 48)
         return res
 
 
@@ -110,6 +113,14 @@ class torapi(object):
             res = req.json()['torrent_results']
             cache.set(self, url, res)
         return res
+    
+    def sanitize(self, obj):
+        cached = cache.get(self, obj['filename'])
+        if not cached:
+            cached = dict(guessit(obj['filename']))
+            cache.set(self, obj['filename'], cached)
+        cached = namedtuple('guessit', cached.keys())(**cached)
+        return cached
 
 
 class traktAPI(object):
