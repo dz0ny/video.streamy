@@ -38,9 +38,14 @@ def ping():
         return False
 
 
-def directory(url, title, arg=None):
-    addDirectoryItem(plugin.handle, plugin.url_for(url, arg)
-                     if arg else plugin.url_for(url), ListItem(title), True)
+def directory(url, title, *args):
+    url = plugin.url_for(url, *args)
+    addDirectoryItem(
+        plugin.handle,
+        url,
+        ListItem(title),
+        True,
+    )
 
 
 @plugin.route('/')
@@ -57,8 +62,14 @@ def index():
 
 @plugin.route('/popcorn_all')
 def popcorn_all():
-    directory(pocorn_movies, 'Movies')
-    directory(popcorn_shows, 'TV')
+    directory(pocorn_movies, 'Movies', 'year', 50)
+    directory(pocorn_movies, 'Movies - New', 'last added', 5)
+    directory(pocorn_movies, 'Movies - Trending', 'trending', 5)
+    directory(pocorn_movies, 'Movies - Rating', 'rating', 5)
+    directory(popcorn_shows, 'TV', 'year', 50)
+    directory(popcorn_shows, 'TV - New', 'last added', 5)
+    directory(popcorn_shows, 'TV - Trending', 'trending', 5)
+    directory(popcorn_shows, 'TV - Rating', 'rating', 5)
     endOfDirectory(plugin.handle)
 
 
@@ -148,15 +159,12 @@ def rarbgc(c):
         return
 
 
-@plugin.route('/popcorn_shows')
-def popcorn_shows():
-    addSortMethod(plugin.handle, SORT_METHOD_UNSORTED)
-    addSortMethod(plugin.handle, SORT_METHOD_DATE)
-    addSortMethod(plugin.handle, SORT_METHOD_GENRE)
+@plugin.route('/popcorn_shows/<c>/<l>')
+def popcorn_shows(c, l):
     setContent(plugin.handle, 'tvshows')
     try:
         t = fetchapi()
-        for f in t.get_shows():
+        for f in t.get_shows(c, int(l)):
             li = ListItem(label=f['title'])
             try:
                 li.setArt({
@@ -181,9 +189,6 @@ def popcorn_shows():
 def popcorn_show(id):
     t = fetchapi()
     show = t.get_show(id)
-    addSortMethod(plugin.handle, SORT_METHOD_UNSORTED)
-    addSortMethod(plugin.handle, SORT_METHOD_DATE)
-    addSortMethod(plugin.handle, SORT_METHOD_GENRE)
     setContent(plugin.handle, 'episodes')
     episodes = sorted(show['episodes'], key=lambda f: (
         10000 * int(f['season'])) + int(f['episode']))
@@ -223,14 +228,11 @@ def to_yt(url):
         return None
 
 
-@plugin.route('/pocorn_movies')
-def pocorn_movies():
+@plugin.route('/pocorn_movies/<c>/<l>')
+def pocorn_movies(c, l):
     t = fetchapi()
-    addSortMethod(plugin.handle, SORT_METHOD_UNSORTED)
-    addSortMethod(plugin.handle, SORT_METHOD_DATE)
-    addSortMethod(plugin.handle, SORT_METHOD_GENRE)
     setContent(plugin.handle, 'movies')
-    for f in t.get_movies():
+    for f in t.get_movies(c, int(l)):
         li = ListItem(label=f['title'])
         try:
             li.setArt({
@@ -261,11 +263,11 @@ def pocorn_movies():
         except Exception:
             pass
         torrents = f['torrents']['en']
-        
-        mag = torrents.get('1080p')
-        if not mag:
-            mag = torrents.get('720p')
-        else:
+
+        try:
+            mag = torrents['720p']['url']
+            mag = torrents['1080p']['url']
+        except Exception:
             for k, v in torrents.iteritems():
                 mag = v['url']
                 break

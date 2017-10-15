@@ -3,7 +3,7 @@ from collections import namedtuple
 
 import requests
 import re
-
+from urllib import unquote, urlencode, quote_plus
 from resources.lib import cache as cachetool
 from trakt import Trakt
 from trakt.objects import Movie, Show
@@ -24,10 +24,10 @@ class fetchapi(object):
             }
         )
 
-    def get_movies(self):
+    def get_movies(self, type_, limit):
         data = []
-        for x in range(1, 50):
-            url = '{}/movies/{}?sort=trending'.format(self.BASE_URL, x)
+        for x in range(1, limit):
+            url = '{}/movies/{}?sort={}'.format(self.BASE_URL, x, type_)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
@@ -37,10 +37,10 @@ class fetchapi(object):
             data.extend(res)
         return data
 
-    def get_shows(self):
+    def get_shows(self, type_, limit):
         data = []
-        for x in range(1, 50):
-            url = '{}/shows/{}?sort=trending'.format(self.BASE_URL, x)
+        for x in range(1, limit):
+            url = '{}/shows/{}?sort={}'.format(self.BASE_URL, x, type_)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
@@ -171,6 +171,7 @@ class torapi(object):
                     li.addContextMenuItems([
                         ('Trailer', 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(trailer)),
                     ])
+        return li
 
 
 class traktAPI(object):
