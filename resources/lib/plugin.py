@@ -1,269 +1,224 @@
 # -*- coding: utf-8 -*-
 
-import logging
-from os import path
-from urllib import unquote, urlencode, quote_plus
+import re
+from urllib import quote_plus, unquote, urlencode
 from urlparse import parse_qs, urlparse
 from xml.etree import ElementTree
+
 import requests
 
-import routing
 import xbmc
-import xbmcaddon
-from resources.lib import kodilogging, kodiutils
-from resources.lib.api import fetchapi, torapi
-from xbmcgui import ListItem
-from xbmcplugin import (SORT_METHOD_DATE, SORT_METHOD_GENRE,
-                        SORT_METHOD_UNSORTED, addDirectoryItem, addSortMethod,
-                        endOfDirectory, setContent)
+from xbmcplugin import setContent
+from resources.lib.api import Streamy, fetchapi, torapi
+from resources.lib.notify import OverlayText
+from simpleplugin import Plugin
 
-ADDON = xbmcaddon.Addon()
-logger = logging.getLogger(ADDON.getAddonInfo('id'))
-kodilogging.config()
-plugin = routing.Plugin()
+app = Plugin()
+streamy = Streamy(app.get_setting('server'))
 
 
-def str_url(sec):
-    p = path.join(kodiutils.get_setting('server'), sec)
-    return p
+def search_ui():
+    keyboard = xbmc.Keyboard('', 'Search')
+    keyboard.doModal()
+    if keyboard.isConfirmed():
+        return keyboard.getText()
+
+def search_trailer(title):
+    title = quote_plus(title)    
+    return 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(title)
 
 
-def ping():
-    try:
-        req = requests.get(str_url('ping'))
-        req.raise_for_status()
-        return True
-    except Exception as e:
-        kodiutils.notification("Cannot connect to server", str(e))
-        return False
+def inspect_url(title, magnet):
+    parts = re.split(r'[\W\-]+', title)
+    quas = ['720p', '1080p', 'hdrip', 'webrip',
+            'dvrip', 'web-dl', 'web', 'hdtv']
+    q = []
+    for part in parts:
+        q.append(part)
+        if part.encode('ascii').lower() in quas:
+            break
+        
+    title = ' '.join(q)
+    return {
+        'label': title,
+        'url': app.get_url(action='inspect_torrent', magnet=magnet),
+        'context_menu': [
+            ('Download', 'Action'),
+            ('Trailer', search_trailer(title)),
+        ],
+    }
 
 
-def directory(url, title, *args):
-    url = plugin.url_for(url, *args)
-    addDirectoryItem(
-        plugin.handle,
-        url,
-        ListItem(title),
-        True,
-    )
+def directory(title, action):
+    return {
+        'label': title,
+        'url': app.get_url(action=action),
+    }
 
 
-@plugin.route('/')
-def index():
-    if not ping():
-        kodiutils.show_settings()
-        return
-    directory(show_torrents, 'Torrents')
-    directory(show_shows_all, 'ShowRSS')
-    directory(rarbg_all, 'RarBG')
-    directory(popcorn_all, 'PopcornTime')
-    endOfDirectory(plugin.handle)
+@app.action()
+def root():
+    yield directory('Downloaded', 'downloaded')
+    yield directory('ShowRSS', 'showrss')
+    yield directory('RarBG', 'rarbg')
+    yield directory('PopcornTime', 'popcorntime')
 
+@app.action()
+def downloaded():
+    for name, ih in streamy.torrents():
+        yield {
+            'label': name,
+            'url': app.get_url(action='inspect_torrent', ih=ih),
+            'context_menu': [
+                ('Download', 'Action'),
+                ('Delete', 'Action'),
+            ],
+        }
 
-@plugin.route('/popcorn_all')
-def popcorn_all():
-    directory(pocorn_movies, 'Movies', 'year', 50)
-    directory(pocorn_movies, 'Movies - New', 'last added', 5)
-    directory(pocorn_movies, 'Movies - Trending', 'trending', 5)
-    directory(pocorn_movies, 'Movies - Rating', 'rating', 5)
-    directory(popcorn_shows, 'TV', 'year', 50)
-    directory(popcorn_shows, 'TV - New', 'last added', 5)
-    directory(popcorn_shows, 'TV - Trending', 'trending', 5)
-    directory(popcorn_shows, 'TV - Rating', 'rating', 5)
-    endOfDirectory(plugin.handle)
-
-
-@plugin.route('/rarbg_all')
-def rarbg_all():
-    directory(rarbgc, 'Movies', 'movies')
-    directory(rarbgc, 'TV', 'tv')
-    directory(rarbgc, 'Music', '23;24;25;26')
-    directory(rarbgc, 'XXX', '4')
-    directory(rarbg_search, 'Search')
-    endOfDirectory(plugin.handle)
-
-
-@plugin.route('/shows_public')
-def show_shows_all():
-    try:
-        ss_id = kodiutils.get_setting('showrss_id')
-        if ss_id != '':
-            url = 'http://showrss.info/user/{}.rss?magnets=true&namespaces=true&name=clean&quality=null&re=null'.format(
-                ss_id)
-        else:
-            url = 'https://showrss.info/other/all.rss'
-        req = requests.get(url)
-        req.raise_for_status()
-        tree = ElementTree.fromstring(req.content)
-        for t in tree.iter('item'):
-            title = t.find('title').text
-            ih = t.find('link').text
-            addDirectoryItem(plugin.handle, plugin.url_for(
-                show_torrent, ih='add', magnet=ih), ListItem(title), True)
-        endOfDirectory(plugin.handle)
-    except Exception as e:
-        kodiutils.notification("Cannot connect to server", str(e))
-        return
-
-
-@plugin.route('/torrents')
-def show_torrents():
-    try:
-        req = requests.get(str_url('torrents'))
-        req.raise_for_status()
-        for t in req.json():
-            addDirectoryItem(plugin.handle, plugin.url_for(
-                show_torrent, t['ih']), ListItem(t['name']), True)
-        endOfDirectory(plugin.handle)
-    except Exception as e:
-        kodiutils.notification("Cannot connect to server", str(e))
-        return
-
-
-@plugin.route('/torrent/<ih>')
-def show_torrent(ih=None):
-
-    if 'magnet' in plugin.args:
-        req = requests.get(str_url('torrents/add'), params={
-            'magnet': unquote(plugin.args['magnet'][0]),
-        })
+@app.cached(60)
+@app.action()
+def showrss():
+    ss_id = app.get_setting('showrss_id')
+    if ss_id != '':
+        url = 'http://showrss.info/user/{}.rss?magnets=true&namespaces=true&name=clean&quality=null&re=null'.format(
+            ss_id)
     else:
-        req = requests.get(str_url('torrents/{}'.format(ih)))
+        url = 'https://showrss.info/other/all.rss'
+    req = requests.get(url)
     req.raise_for_status()
-    data = req.json()
-    url = kodiutils.get_setting('server')
-    if data['files']:
-        for f in data['files']:
-            addDirectoryItem(plugin.handle, "{}{}".format(
-                url, f['data']), ListItem('/'.join(f['Path'])))
+    tree = ElementTree.fromstring(req.content)
+    for t in tree.iter('item'):
+        name = t.find('title').text
+        magnet = t.find('link').text
+        yield inspect_url(name, magnet)
+
+@app.action()
+def inspect_torrent(params):
+    if 'ih' in params:
+        torrent = streamy.torrent(params.ih)
     else:
-        addDirectoryItem(plugin.handle, "{}/torrents/{}/stream?file={}".format(
-            url, data['ih'], data['name']), ListItem(data['name']))
-    endOfDirectory(plugin.handle)
+        torrent = streamy.torrent(None, params.magnet)
+    for name, url, size in torrent:
+        yield {
+            'label': name,
+            'url': url,
+            'is_playable': True,
+        }
 
 
-@plugin.route('/rarbg/<c>')
-def rarbgc(c):
-    try:
-        t = torapi()
-        for f in t.category(c):
-            li = t.sanitize(f)
-            addDirectoryItem(
-                plugin.handle,
-                plugin.url_for(show_torrent, ih='add', magnet=f['download']),
-                li, True)
+@app.action()
+def rarbg():
+    
+    def url(cat):
+        return app.get_url(action='rarbg_category', category=cat)
 
-        endOfDirectory(plugin.handle)
-    except Exception as e:
-        kodiutils.notification("rarbg", str(e))
-        return
+    yield {'label': 'Search', 'url': url('search')}
+    yield {'label': 'Movies', 'url': url('movies')}
+    yield {'label': 'TV', 'url': url('tv')}
+    yield {'label': 'Music', 'url': url('23;24;25;26')}
+    yield {'label': 'XXX', 'url': url('4')}
 
 
-@plugin.route('/popcorn_shows/<c>/<l>')
-def popcorn_shows(c, l):
-    setContent(plugin.handle, 'tvshows')
-    try:
-        t = fetchapi()
-        for f in t.get_shows(c, int(l)):
-            li = ListItem(label=f['title'])
-            try:
-                li.setArt({
-                    'poster': f['images']['poster'],
-                    'fanart': f['images']['fanart']
-                })
-            except Exception:
-                pass
-            addDirectoryItem(
-                plugin.handle,
-                plugin.url_for(popcorn_show, f['imdb_id']),
-                li,
-                True
-            )
-        endOfDirectory(plugin.handle)
-    except Exception as e:
-        kodiutils.notification("popcorn", str(e))
-        return
+@app.cached(60)
+@app.action()
+def rarbg_category(params):
+    api = torapi()
+    if params.category == 'search':
+        search = search_ui()
+        torrents = api.search(search)
+    else:
+        torrents = api.category(params.category)
+    for name, url in torrents:
+        yield inspect_url(name, url)
 
 
-@plugin.route('/popcorn_show/<id>')
-def popcorn_show(id):
-    t = fetchapi()
-    show = t.get_show(id)
-    setContent(plugin.handle, 'episodes')
+@app.action()
+def popcorntime():
+    
+    def url_movie(sort, limit, search=False):
+        return app.get_url(
+            action='popcorntime_movie',
+            sort=sort,
+            limit=limit,
+            search=search,
+        )
+    
+    def url_tv(sort, limit, search=False):
+        return app.get_url(
+            action='popcorntime_tv',
+            sort=sort,
+            limit=limit,
+            search=search,
+        )
+
+    yield {'label': 'Movies', 'url': url_movie('year', 50)}
+    yield {'label': 'Movies - Search', 'url': url_movie('year', 2, 'ok')}
+    yield {'label': 'Movies - New', 'url': url_movie('last added', 5)}
+    yield {'label': 'Movies - Trending', 'url': url_movie('trending', 5)}
+    yield {'label': 'Movies - Rating', 'url': url_movie('rating', 5)}
+    yield {'label': 'TV', 'url': url_tv('year', 50)}
+    yield {'label': 'TV- Search', 'url': url_tv('year', 2, 'ok')}
+    yield {'label': 'TV - New', 'url': url_tv('last added', 5)}
+    yield {'label': 'TV - Trending', 'url': url_tv('trending', 5)}
+    yield {'label': 'TV - Rating', 'url': url_tv('rating', 5)}
+
+
+@app.action()
+def popcorntime_tv(params):
+    setContent(app._handle, 'tvshows')
+    search = None
+    if params.search=='ok':
+        search = search_ui()
+    shows = fetchapi().get_shows(params.sort, int(params.limit), search)
+    def url_show(show):
+        return app.get_url(
+            action='popcorntime_show',
+            show=show,
+        )
+    for show in shows:
+        yield {
+            'label': show['title'],
+            'poster': show['images']['poster'],
+            'fanart': show['images']['fanart'],
+             'url': url_show(show['imdb_id'])
+        }
+
+
+@app.action()
+def popcorntime_show(params):
+    setContent(app._handle, 'episodes')
+    show = fetchapi().get_show(params.show)
     episodes = sorted(show['episodes'], key=lambda f: (
         10000 * int(f['season'])) + int(f['episode']))
     for f in episodes:
-        try:
-            li = ListItem(label='{} S{:02d}E{:02d}: {}'.format(
-                show['title'], int(f['season']), int(f['episode']), f['title']
-            ))
-
-            li.setInfo(
-                'video',
-                dict(
-                    plot=f['overview'],
-                    plotoutline=f['overview'],
-                )
-            )
-            for k, v in f['torrents'].iteritems():
-                mag = v['url']
-                break
-
-            addDirectoryItem(plugin.handle, plugin.url_for(
-                show_torrent, ih='add', magnet=mag), li, True)
-        except Exception:
-            pass
-    endOfDirectory(plugin.handle)
-
-
-def to_yt(url):
-    if url and 'youtube' not in url:
-        return None
-    try:
-        url_data = urlparse(url)
-        query = parse_qs(url_data.query)
-        url = 'plugin://plugin.video.youtube/play/?video_id=' + query["v"][0]
-        return url
-    except Exception:
-        return None
-
-
-@plugin.route('/pocorn_movies/<c>/<l>')
-def pocorn_movies(c, l):
-    t = fetchapi()
-    setContent(plugin.handle, 'movies')
-    for f in t.get_movies(c, int(l)):
-        li = ListItem(label=f['title'])
-        try:
-            li.setArt({
-                'poster': f['images']['poster'],
-                'fanart': f['images']['fanart']
-            })
-        except Exception:
-            pass
-        trailer = to_yt(f['trailer'])
-        li.setInfo(
-            'video',
-            dict(
-                plot=f['synopsis'],
-                plotoutline=f['synopsis'],
-                code=f['imdb_id'],
-                genre='/'.join(f['genres']),
-                imdbnumber=f['imdb_id'],
-                year=f['year'],
-                duration=int(f['runtime']) * 60,
-                trailer=trailer,
-            )
+        name = '{} S{:02d}E{:02d}: {}'.format(
+            show['title'], int(f['season']), int(f['episode']), f['title']
         )
-        try:
-            if f['trailer']:
-                li.addContextMenuItems([
-                    ('Trailer', 'PlayMedia({})'.format(trailer.encode('ascii'))),
-                ])
-        except Exception:
-            pass
-        torrents = f['torrents']['en']
+        for k, v in f['torrents'].iteritems():
+            url = v['url']
+            break
+        data = inspect_url(name, url)
+        data['info'] = {
+            'video': {
+                'year': int(f['year']),
+                'duration': int(f['runtime']) * 60,
+                'plot': f['synopsis'],
+            }
+        }
+        yield data
 
+
+
+@app.cached(60)
+@app.action()
+def popcorntime_movie(params):
+    search = None
+    if params.search=='ok':
+        search = search_ui()
+    setContent(app._handle, 'movies')
+    torrents = fetchapi().get_movies(params.sort, int(params.limit), search)
+    for f in torrents:
+        torrents = f['torrents']['en']
         try:
             mag = torrents['720p']['url']
             mag = torrents['1080p']['url']
@@ -271,29 +226,24 @@ def pocorn_movies(c, l):
             for k, v in torrents.iteritems():
                 mag = v['url']
                 break
-
-        addDirectoryItem(plugin.handle, plugin.url_for(
-            show_torrent, ih='add', magnet=mag), li, True)
-    endOfDirectory(plugin.handle)
-
-
-@plugin.route('/search_rarbg')
-def rarbg_search():
-    keyboard = xbmc.Keyboard('', 'Search')
-    keyboard.doModal()
-    if keyboard.isConfirmed():
-        keyboardinput = keyboard.getText()
-        if keyboardinput:
-            try:
-                t = torapi()
-                for f in t.search(keyboardinput):
-                    addDirectoryItem(plugin.handle, plugin.url_for(
-                        show_torrent, ih='add', magnet=f['download']), ListItem(f['filename']), True)
-                endOfDirectory(plugin.handle)
-            except Exception as e:
-                kodiutils.notification("rarbg", str(e))
-                return
+        data = inspect_url(f['title'], mag)
+        data['info'] = {
+            'video': {
+                'genre': '/'.join(f['genres']),
+                'year': int(f['year']),
+                'duration': int(f['runtime']) * 60,
+                'plot': f['synopsis'],
+            }
+        }
+        data['poster'] = f['images']['poster']
+        data['fanart'] = f['images']['fanart']
+        data['online_db_ids'] = {'imdb': f['imdb_id']}
+        data['ratings'] = [{
+            'type': 'imdb',
+            'rating': f['rating']['percentage']
+        }]
+        yield data
 
 
-def run():
-    plugin.run()
+def start():
+    app.run()
