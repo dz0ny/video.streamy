@@ -1,4 +1,4 @@
-VERSION := 0.0.4
+VERSION := 0.0.7
 APP_NAME := streamy
 COMMIT := $(shell git rev-parse HEAD)
 BUILD_TIME := $(shell date -u +%FT%T)
@@ -12,5 +12,13 @@ package: clean
 	cp -r resources video.streamy/
 	cp addon.xml video.streamy/
 	cp main.py video.streamy/
-	zip -r video.$(APP_NAME)-${COMMIT}.zip video.streamy
+	zip -r video.$(APP_NAME)-${VERSION}-${COMMIT}.zip video.streamy
 	rm -rf video.streamy
+
+upload:
+	github-release upload \
+		--user dz0ny \
+		--repo video.streamy \
+		--tag "v$(VERSION)" \
+		--name "video.$(APP_NAME)-${VERSION}-${COMMIT}.zip" \
+		--file "video.$(APP_NAME)-${VERSION}-${COMMIT}.zip"

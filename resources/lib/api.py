@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import logging
 from collections import namedtuple
 
@@ -8,10 +10,53 @@ from resources.lib import cache as cachetool
 from trakt import Trakt
 from trakt.objects import Movie, Show
 from xbmcgui import ListItem
-
+from os import path
 cache = cachetool.Cache()
 logger = logging.getLogger(__name__)
+    
+class Streamy(object):
+    root = None
 
+    def __init__(self, root):
+        self.root = root
+
+    def url(self, sec):
+        return path.join(
+            self.root,
+            sec[1:] if sec.startswith('/') else sec
+        )
+
+    def ping(self):
+        try:
+            req = requests.get(self.url('ping'))
+            req.raise_for_status()
+            return True
+        except Exception as e:
+            return False
+
+    def torrents(self):
+        req = requests.get(self.url('torrents'))
+        req.raise_for_status()
+        for t in req.json():
+            yield t['name'], t['ih']
+        
+    def torrent(self, ih, magnet=None):
+        if magnet:
+            req = requests.get(self.url('torrents/add'), params={
+                'magnet': magnet,
+            })
+        else:
+            req = requests.get(self.url('torrents/' + ih))
+        req.raise_for_status()
+        data = req.json()
+        if data.get('files'):
+            for f in data['files']:
+                name = '/'.join(f['Path'])
+                yield name, self.url(f['data']), f['Length']
+        else:
+            name = data['name']
+            url = '/torrents/{}/stream?file={}'.format(data['ih'], name)
+            yield name, self.url(url), 0
 
 class fetchapi(object):
     BASE_URL = "https://movies-v2.api-fetch.website"
@@ -24,10 +69,12 @@ class fetchapi(object):
             }
         )
 
-    def get_movies(self, type_, limit):
+    def get_movies(self, type_, limit, search):
         data = []
         for x in range(1, limit):
             url = '{}/movies/{}?sort={}'.format(self.BASE_URL, x, type_)
+            if search:
+                url += '&keywords={}'.format(search)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
@@ -37,10 +84,12 @@ class fetchapi(object):
             data.extend(res)
         return data
 
-    def get_shows(self, type_, limit):
+    def get_shows(self, type_, limit, search):
         data = []
         for x in range(1, limit):
             url = '{}/shows/{}?sort={}'.format(self.BASE_URL, x, type_)
+            if search:
+                url += '&keywords={}'.format(search)
             res = cache.get(self, url)
             if not res:
                 req = self.r.get(url)
@@ -52,16 +101,6 @@ class fetchapi(object):
 
     def get_show(self, id):
         url = '{}/show/{}'.format(self.BASE_URL, id)
-        res = cache.get(self, url)
-        if not res:
-            req = self.r.get(url)
-            req.raise_for_status()
-            res = req.json()
-            cache.set(self, url, res, 48)
-        return res
-
-    def search(self, k):
-        url = '{}/movies/1?sort=trending&keywords={}'.format(self.BASE_URL, k)
         res = cache.get(self, url)
         if not res:
             req = self.r.get(url)
@@ -95,7 +134,8 @@ class torapi(object):
             req.raise_for_status()
             res = req.json()['torrent_results']
             cache.set(self, url, res)
-        return res
+        for t in res:
+            yield self.parse(t)
 
     def search(self, c):
         url = "&sort=seeders&limit=100&mode=search&search_string=" + c
@@ -106,7 +146,11 @@ class torapi(object):
             req.raise_for_status()
             res = req.json()['torrent_results']
             cache.set(self, url, res)
-        return res
+        for t in res:
+            yield self.parse(t)
+
+    def parse(self, obj):
+        return obj['title'], obj['download']
 
     def sanitize(self, obj):
         info = dict(
@@ -172,54 +216,3 @@ class torapi(object):
                         ('Trailer', 'Container.Update(plugin://plugin.video.youtube/kodion/search/query/?q={})'.format(trailer)),
                     ])
         return li
-
-
-class traktAPI(object):
-    __client_id = "d4161a7a106424551add171e5470112e4afdaf2438e6ef2fe0548edc75924868"
-    __client_secret = "b5fcd7cb5d9bb963784d11bbf8535bc0d25d46225016191eb48e50792d2155c0"
-
-    def __init__(self, force=False):
-        logger.debug("Initializing.")
-
-        proxyURL = checkAndConfigureProxy()
-        if proxyURL:
-            Trakt.http.proxies = {
-                'http': proxyURL,
-                'https': proxyURL
-            }
-
-        # Configure
-        Trakt.configuration.defaults.client(
-            id=self.__client_id,
-            secret=self.__client_secret
-        )
-
-    def getMovieSummary(self, movieId):
-        with Trakt.configuration.http(retry=True):
-            return Trakt['movies'].get(movieId)
-
-    def getShowSummary(self, showId):
-        with Trakt.configuration.http(retry=True):
-            return Trakt['shows'].get(showId)
-
-    def getShowWithAllEpisodesList(self, showId):
-        with Trakt.configuration.http(retry=True, timeout=90):
-            return Trakt['shows'].seasons(showId, extended='episodes')
-
-    def getEpisodeSummary(self, showId, season, episode):
-        with Trakt.configuration.http(retry=True):
-            return Trakt['shows'].episode(showId, season, episode)
-
-    def getIdLookup(self, id, id_type):
-        with Trakt.configuration.http(retry=True):
-            result = Trakt['search'].lookup(id, id_type)
-            if result and not isinstance(result, list):
-                result = [result]
-            return result
-
-    def getTextQuery(self, query, type, year):
-        with Trakt.configuration.http(retry=True, timeout=90):
-            result = Trakt['search'].query(query, type, year)
-            if result and not isinstance(result, list):
-                result = [result]
-            return result
