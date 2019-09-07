@@ -151,12 +151,12 @@ def popcorntime():
             search=search,
         )
 
-    yield {'label': 'Movies', 'url': url_movie('year', 50)}
+    #yield {'label': 'Movies', 'url': url_movie('year', 50)}
     yield {'label': 'Movies - Search', 'url': url_movie('year', 2, 'ok')}
     yield {'label': 'Movies - New', 'url': url_movie('last added', 5)}
     yield {'label': 'Movies - Trending', 'url': url_movie('trending', 5)}
     yield {'label': 'Movies - Rating', 'url': url_movie('rating', 5)}
-    yield {'label': 'TV', 'url': url_tv('year', 50)}
+    #yield {'label': 'TV', 'url': url_tv('year', 50)}
     yield {'label': 'TV- Search', 'url': url_tv('year', 2, 'ok')}
     yield {'label': 'TV - New', 'url': url_tv('last added', 5)}
     yield {'label': 'TV - Trending', 'url': url_tv('trending', 5)}
@@ -198,13 +198,6 @@ def popcorntime_show(params):
             url = v['url']
             break
         data = inspect_url(name, url)
-        data['info'] = {
-            'video': {
-                'year': int(f['year']),
-                'duration': int(f['runtime']) * 60,
-                'plot': f['synopsis'],
-            }
-        }
         yield data
 
 
