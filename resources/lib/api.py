@@ -5,10 +5,8 @@ from collections import namedtuple
 
 import requests
 import re
-from urllib import unquote, urlencode, quote_plus
+from urllib import quote_plus
 from resources.lib import cache as cachetool
-from trakt import Trakt
-from trakt.objects import Movie, Show
 from xbmcgui import ListItem
 from os import path
 cache = cachetool.Cache()
@@ -111,20 +109,30 @@ class fetchapi(object):
 
 
 class torapi(object):
-    BASE_URL = "https://torrentapi.org/pubapi_v2.php"
+    BASE_URL = "https://torrentapi.org/pubapi_v2.php?app_id=Jackett"
     token = None
 
     def __init__(self):
         self.r = requests.Session()
-        req = self.r.get(self.BASE_URL + "?get_token=get_token")
+        self.r.headers.update(
+            {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3",
+                "accept-encoding": "gzip, deflate",
+                "accept-language": "sl,en;q=0.9,de;q=0.8,en-GB;q=0.7,el;q=0.6",
+                "cache-control":"max-age=0",
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36'
+            }
+        )
+        req = self.r.get(self.BASE_URL + "&get_token=get_token")
         req.raise_for_status()
         self.token= req.json()["token"]
 
 
     def category(self, c):
         url = '&category=' + c + "&format=json_extended&sort=seeders&limit=100"
-        url = self.BASE_URL + "?token=" + self.token + url
+        url = self.BASE_URL + "&token=" + self.token + url
         res = cache.get(self, url)
+        
         if not res:
             req = self.r.get(url)
             req.raise_for_status()
@@ -135,7 +143,7 @@ class torapi(object):
 
     def search(self, c):
         url = "&sort=seeders&limit=100&mode=search&search_string=" + c
-        url = self.BASE_URL + "?token=" + self.token + url
+        url = self.BASE_URL + "&token=" + self.token + url
         res = cache.get(self, url)
         if not res:
             req = self.r.get(url)
